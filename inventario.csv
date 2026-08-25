@@ -1,2 +1,4 @@
 id,nombre,categoria,color,tamaño,stock_actual,stock_minimo,precio_unitario,precio_compra,estado_pago,fecha_compra,numero_guia_factura,proveedor,ubicacion,fecha_registro
 1,CIERRE,Cierre,NEGRO,30 CM,50,10,0.0,50.0,Cancelado,2026-08-25,2021,KONING,3ER PISO,2026-08-25 11:11:38
+2,cierre,Cierre,azul,30 cm ,0,10,0.0,25.0,Pendiente,2026-08-25,Sin especificar,Sin especificar,Sin especificar,2026-08-25 22:28:54
+3,elastico,Otro,Sin especificar,3 cm,0,10,0.0,20.0,Pendiente,2026-08-25,Sin especificar,Sin especificar,Sin especificar,2026-08-25 22:31:23
