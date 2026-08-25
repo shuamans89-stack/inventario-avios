@@ -86,6 +86,12 @@ df_inventario = cargar_inventario()
 df_movimientos = cargar_movimientos()
 df_pagos = cargar_pagos()
 
+# Inicializar carritos en session_state
+if 'carrito_entrada' not in st.session_state:
+    st.session_state.carrito_entrada = []
+if 'carrito_salida' not in st.session_state:
+    st.session_state.carrito_salida = []
+
 # PÁGINA: VER INVENTARIO
 if pagina == "📋 Ver Inventario":
     st.header("📋 Inventario Actual")
@@ -263,9 +269,12 @@ elif pagina == "📥 Registrar Entrada":
         
         st.markdown("---")
         
+        # Modo de registro
+        modo_registro = st.radio("Modo de registro:", ["Individual", "Carrito (múltiples productos)"])
+        
         if df_filtrado_ent.empty:
             st.warning("No hay productos que coincidan con los filtros seleccionados.")
-        else:
+        elif modo_registro == "Individual":
             producto = st.selectbox("Seleccionar producto:", df_filtrado_ent['nombre'].tolist())
             
             if producto:
@@ -308,6 +317,92 @@ elif pagina == "📥 Registrar Entrada":
                         
                         st.success(f"✅ Entrada registrada: +{cantidad} unidades de '{producto}'")
                         st.rerun()
+        else:
+            # Modo carrito
+            st.subheader("🛒 Carrito de Entradas")
+            
+            # Agregar productos al carrito
+            with st.form("form_agregar_carrito_entrada"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    producto_carrito = st.selectbox("Seleccionar producto para agregar:", df_filtrado_ent['nombre'].tolist())
+                with col2:
+                    cantidad_carrito = st.number_input("Cantidad:", min_value=1, value=1)
+                
+                if st.form_submit_button("➕ Agregar al carrito"):
+                    if producto_carrito:
+                        producto_info = df_filtrado_ent[df_filtrado_ent['nombre'] == producto_carrito].iloc[0]
+                        # Verificar si ya está en el carrito
+                        ya_en_carrito = False
+                        for item in st.session_state.carrito_entrada:
+                            if item['producto'] == producto_carrito:
+                                item['cantidad'] += cantidad_carrito
+                                ya_en_carrito = True
+                                break
+                        
+                        if not ya_en_carrito:
+                            st.session_state.carrito_entrada.append({
+                                'producto': producto_carrito,
+                                'cantidad': cantidad_carrito,
+                                'categoria': producto_info['categoria'],
+                                'color': producto_info['color'],
+                                'tamaño': producto_info['tamaño']
+                            })
+                        
+                        st.success(f"✅ {cantidad_carrito} unidades de '{producto_carrito}' agregadas al carrito")
+                        st.rerun()
+            
+            # Mostrar carrito
+            if st.session_state.carrito_entrada:
+                st.markdown("---")
+                st.subheader("📋 Productos en el carrito")
+                
+                df_carrito = pd.DataFrame(st.session_state.carrito_entrada)
+                st.dataframe(df_carrito, use_container_width=True, hide_index=True)
+                
+                # Motivo general para todas las entradas
+                motivo_general = st.text_area("Motivo general (para todos los productos):", placeholder="Ej: Compra a proveedor XYZ")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("🧹 Limpiar carrito"):
+                        st.session_state.carrito_entrada = []
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️ Eliminar último"):
+                        if st.session_state.carrito_entrada:
+                            st.session_state.carrito_entrada.pop()
+                            st.rerun()
+                with col3:
+                    if st.button("✅ Procesar todas las entradas", type="primary"):
+                        total_entradas = len(st.session_state.carrito_entrada)
+                        # Procesar todos los items del carrito
+                        for item in st.session_state.carrito_entrada:
+                            # Actualizar stock
+                            idx = df_inventario[df_inventario['nombre'] == item['producto']].index[0]
+                            df_inventario.at[idx, 'stock_actual'] += item['cantidad']
+                            
+                            # Registrar movimiento
+                            nuevo_movimiento = {
+                                'id': generar_id(df_movimientos),
+                                'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                'tipo': 'ENTRADA',
+                                'producto_id': df_inventario.at[idx, 'id'],
+                                'producto_nombre': item['producto'],
+                                'cantidad': item['cantidad'],
+                                'motivo': motivo_general if motivo_general else "Sin especificar",
+                                'usuario': "Usuario"
+                            }
+                            df_movimientos = pd.concat([df_movimientos, pd.DataFrame([nuevo_movimiento])], ignore_index=True)
+                        
+                        guardar_inventario(df_inventario)
+                        guardar_movimientos(df_movimientos)
+                        
+                        st.session_state.carrito_entrada = []
+                        st.success(f"✅ {total_entradas} entradas procesadas exitosamente")
+                        st.rerun()
+            else:
+                st.info("🛒 El carrito está vacío. Agrega productos para procesar entradas en grupo.")
 
 # PÁGINA: REGISTRAR SALIDA
 elif pagina == "📤 Registrar Salida":
