@@ -1,0 +1,2 @@
+id,fecha_pago,producto_id,producto_nombre,monto,metodo_pago,referencia,observaciones
+1,2026-08-25 11:12:55,1,CIERRE,50.0,Efectivo,250,PAGO A KONIGN 
