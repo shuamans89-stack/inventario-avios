@@ -68,6 +68,14 @@ def generar_id(df):
         return 1
     return df['id'].max() + 1
 
+
+def etiqueta_producto(fila):
+    return f"{fila['nombre']} ({fila['color']} - {fila['tamaño']}) [ID:{int(fila['id'])}]"
+
+
+def opciones_productos(df):
+    return {etiqueta_producto(fila): int(fila['id']) for _, fila in df.iterrows()}
+
 # Interfaz principal
 st.title("🧵 Sistema de Control de Inventario - Avíos Textil")
 st.markdown("---")
@@ -131,11 +139,13 @@ if pagina == "📋 Ver Inventario":
         # Opción para editar estado de pago
         st.markdown("---")
         st.subheader("⚡ Edición Rápida de Estado de Pago")
+        opciones_editar = opciones_productos(df_filtrado)
         producto_editar = st.selectbox("Seleccionar producto para editar estado de pago:", 
-                                     ["Seleccionar..."] + df_filtrado['nombre'].tolist())
+                                     ["Seleccionar..."] + list(opciones_editar.keys()))
         
         if producto_editar != "Seleccionar...":
-            producto_info = df_filtrado[df_filtrado['nombre'] == producto_editar].iloc[0]
+            id_editar = opciones_editar[producto_editar]
+            producto_info = df_filtrado[df_filtrado['id'] == id_editar].iloc[0]
             col1, col2 = st.columns(2)
             with col1:
                 estado_actual = producto_info['estado_pago'] if pd.notna(producto_info['estado_pago']) else "Sin estado"
@@ -144,7 +154,7 @@ if pagina == "📋 Ver Inventario":
                 nuevo_estado = st.selectbox("Nuevo estado:", ["Pendiente", "Cancelado"])
             
             if st.button(f"Actualizar estado de '{producto_editar}'"):
-                idx = df_inventario[df_inventario['nombre'] == producto_editar].index[0]
+                idx = df_inventario[df_inventario['id'] == id_editar].index[0]
                 estado_anterior = df_inventario.at[idx, 'estado_pago']
                 df_inventario.at[idx, 'estado_pago'] = nuevo_estado
                 guardar_inventario(df_inventario)
@@ -213,7 +223,19 @@ elif pagina == "➕ Agregar Producto":
         submitted = st.form_submit_button("Agregar Producto")
         
         if submitted:
-            if nombre and stock_actual >= 0 and precio_unitario >= 0:
+            color_norm = color if color else "Sin especificar"
+            tamaño_norm = tamaño if tamaño else "Sin especificar"
+            duplicado = (
+                (df_inventario['nombre'].str.strip().str.lower() == nombre.strip().lower()) &
+                (df_inventario['color'].str.strip().str.lower() == color_norm.strip().lower()) &
+                (df_inventario['tamaño'].str.strip().str.lower() == tamaño_norm.strip().lower())
+            ).any() if nombre else False
+            
+            if not nombre or stock_actual < 0 or precio_unitario < 0:
+                st.error("❌ Por favor completa los campos obligatorios (nombre, stock actual, precio unitario)")
+            elif duplicado:
+                st.error(f"❌ Ya existe un producto '{nombre}' con color '{color_norm}' y tamaño '{tamaño_norm}'. Para sumar stock, usa 'Registrar Entrada'.")
+            else:
                 nuevo_id = generar_id(df_inventario)
                 nuevo_producto = {
                     'id': nuevo_id,
@@ -237,8 +259,6 @@ elif pagina == "➕ Agregar Producto":
                 guardar_inventario(df_inventario)
                 st.success(f"✅ Producto '{nombre}' agregado exitosamente con ID: {nuevo_id}")
                 st.rerun()
-            else:
-                st.error("❌ Por favor completa los campos obligatorios (nombre, stock actual, precio unitario)")
 
 # PÁGINA: REGISTRAR ENTRADA
 elif pagina == "📥 Registrar Entrada":
@@ -275,10 +295,12 @@ elif pagina == "📥 Registrar Entrada":
         if df_filtrado_ent.empty:
             st.warning("No hay productos que coincidan con los filtros seleccionados.")
         elif modo_registro == "Individual":
-            producto = st.selectbox("Seleccionar producto:", df_filtrado_ent['nombre'].tolist())
+            opciones_ent = opciones_productos(df_filtrado_ent)
+            producto = st.selectbox("Seleccionar producto:", list(opciones_ent.keys()))
             
             if producto:
-                producto_info = df_filtrado_ent[df_filtrado_ent['nombre'] == producto].iloc[0]
+                id_entrada = opciones_ent[producto]
+                producto_info = df_filtrado_ent[df_filtrado_ent['id'] == id_entrada].iloc[0]
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.info(f"Stock actual: {producto_info['stock_actual']}")
@@ -297,7 +319,7 @@ elif pagina == "📥 Registrar Entrada":
                     
                     if submitted:
                         # Actualizar stock
-                        idx = df_inventario[df_inventario['nombre'] == producto].index[0]
+                        idx = df_inventario[df_inventario['id'] == id_entrada].index[0]
                         df_inventario.at[idx, 'stock_actual'] += cantidad
                         guardar_inventario(df_inventario)
                         
@@ -325,23 +347,26 @@ elif pagina == "📥 Registrar Entrada":
             with st.form("form_agregar_carrito_entrada"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    producto_carrito = st.selectbox("Seleccionar producto para agregar:", df_filtrado_ent['nombre'].tolist())
+                    opciones_carrito = opciones_productos(df_filtrado_ent)
+                    producto_carrito = st.selectbox("Seleccionar producto para agregar:", list(opciones_carrito.keys()))
                 with col2:
                     cantidad_carrito = st.number_input("Cantidad:", min_value=1, value=1)
                 
                 if st.form_submit_button("➕ Agregar al carrito"):
                     if producto_carrito:
-                        producto_info = df_filtrado_ent[df_filtrado_ent['nombre'] == producto_carrito].iloc[0]
+                        id_carrito = opciones_carrito[producto_carrito]
+                        producto_info = df_filtrado_ent[df_filtrado_ent['id'] == id_carrito].iloc[0]
                         # Verificar si ya está en el carrito
                         ya_en_carrito = False
                         for item in st.session_state.carrito_entrada:
-                            if item['producto'] == producto_carrito:
+                            if item['id'] == id_carrito:
                                 item['cantidad'] += cantidad_carrito
                                 ya_en_carrito = True
                                 break
                         
                         if not ya_en_carrito:
                             st.session_state.carrito_entrada.append({
+                                'id': id_carrito,
                                 'producto': producto_carrito,
                                 'cantidad': cantidad_carrito,
                                 'categoria': producto_info['categoria'],
@@ -379,7 +404,7 @@ elif pagina == "📥 Registrar Entrada":
                         # Procesar todos los items del carrito
                         for item in st.session_state.carrito_entrada:
                             # Actualizar stock
-                            idx = df_inventario[df_inventario['nombre'] == item['producto']].index[0]
+                            idx = df_inventario[df_inventario['id'] == item['id']].index[0]
                             df_inventario.at[idx, 'stock_actual'] += item['cantidad']
                             
                             # Registrar movimiento
@@ -433,13 +458,18 @@ elif pagina == "📤 Registrar Salida":
         
         st.markdown("---")
         
+        # Modo de registro
+        modo_registro_sal = st.radio("Modo de registro:", ["Individual", "Carrito (múltiples productos)"], key="modo_salida")
+        
         if df_filtrado_sal.empty:
             st.warning("No hay productos que coincidan con los filtros seleccionados.")
-        else:
-            producto = st.selectbox("Seleccionar producto:", df_filtrado_sal['nombre'].tolist())
+        elif modo_registro_sal == "Individual":
+            opciones_sal = opciones_productos(df_filtrado_sal)
+            producto = st.selectbox("Seleccionar producto:", list(opciones_sal.keys()))
             
             if producto:
-                producto_info = df_filtrado_sal[df_filtrado_sal['nombre'] == producto].iloc[0]
+                id_salida = opciones_sal[producto]
+                producto_info = df_filtrado_sal[df_filtrado_sal['id'] == id_salida].iloc[0]
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.info(f"Stock actual: {producto_info['stock_actual']}")
@@ -452,14 +482,14 @@ elif pagina == "📤 Registrar Salida":
                     st.info(f"Estado: {stock_color}")
                 
                 with st.form("form_salida"):
-                    cantidad = st.number_input("Cantidad a retirar*", min_value=1, max_value=producto_info['stock_actual'], value=1)
+                    cantidad = st.number_input("Cantidad a retirar*", min_value=1, max_value=int(producto_info['stock_actual']), value=1)
                     motivo = st.text_area("Motivo/Nota", placeholder="Ej: Venta, uso en producción, pérdida, etc.")
                     
                     submitted = st.form_submit_button("Registrar Salida")
                     
                     if submitted:
                         # Actualizar stock
-                        idx = df_inventario[df_inventario['nombre'] == producto].index[0]
+                        idx = df_inventario[df_inventario['id'] == id_salida].index[0]
                         df_inventario.at[idx, 'stock_actual'] -= cantidad
                         guardar_inventario(df_inventario)
                         
@@ -479,6 +509,108 @@ elif pagina == "📤 Registrar Salida":
                         
                         st.success(f"✅ Salida registrada: -{cantidad} unidades de '{producto}'")
                         st.rerun()
+        else:
+            # Modo carrito
+            st.subheader("🛒 Carrito de Salidas")
+            
+            # Agregar productos al carrito
+            with st.form("form_agregar_carrito_salida"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    opciones_carrito_sal = opciones_productos(df_filtrado_sal)
+                    producto_carrito_sal = st.selectbox("Seleccionar producto para agregar:", list(opciones_carrito_sal.keys()))
+                with col2:
+                    cantidad_carrito_sal = st.number_input("Cantidad:", min_value=1, value=1)
+                
+                if st.form_submit_button("➕ Agregar al carrito"):
+                    if producto_carrito_sal:
+                        id_carrito_sal = opciones_carrito_sal[producto_carrito_sal]
+                        producto_info = df_filtrado_sal[df_filtrado_sal['id'] == id_carrito_sal].iloc[0]
+                        # Cantidad ya solicitada en el carrito para este producto
+                        cantidad_en_carrito = sum(item['cantidad'] for item in st.session_state.carrito_salida if item['id'] == id_carrito_sal)
+                        stock_disponible = int(producto_info['stock_actual']) - cantidad_en_carrito
+                        
+                        if cantidad_carrito_sal > stock_disponible:
+                            st.error(f"❌ Stock insuficiente: quedan {stock_disponible} unidades disponibles de '{producto_carrito_sal}'")
+                        else:
+                            ya_en_carrito = False
+                            for item in st.session_state.carrito_salida:
+                                if item['id'] == id_carrito_sal:
+                                    item['cantidad'] += cantidad_carrito_sal
+                                    ya_en_carrito = True
+                                    break
+                            
+                            if not ya_en_carrito:
+                                st.session_state.carrito_salida.append({
+                                    'id': id_carrito_sal,
+                                    'producto': producto_carrito_sal,
+                                    'cantidad': cantidad_carrito_sal,
+                                    'categoria': producto_info['categoria'],
+                                    'color': producto_info['color'],
+                                    'tamaño': producto_info['tamaño']
+                                })
+                            
+                            st.success(f"✅ {cantidad_carrito_sal} unidades de '{producto_carrito_sal}' agregadas al carrito")
+                            st.rerun()
+            
+            # Mostrar carrito
+            if st.session_state.carrito_salida:
+                st.markdown("---")
+                st.subheader("📋 Productos en el carrito")
+                
+                df_carrito = pd.DataFrame(st.session_state.carrito_salida)
+                st.dataframe(df_carrito, use_container_width=True, hide_index=True)
+                
+                # Motivo general para todas las salidas
+                motivo_general_sal = st.text_area("Motivo general (para todos los productos):", placeholder="Ej: Pedido cliente XYZ")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if st.button("🧹 Limpiar carrito", key="limpiar_carrito_sal"):
+                        st.session_state.carrito_salida = []
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️ Eliminar último", key="eliminar_ultimo_sal"):
+                        if st.session_state.carrito_salida:
+                            st.session_state.carrito_salida.pop()
+                            st.rerun()
+                with col3:
+                    if st.button("✅ Procesar todas las salidas", type="primary", key="procesar_salidas"):
+                        total_salidas = len(st.session_state.carrito_salida)
+                        excedidos = []
+                        # Procesar todos los items del carrito
+                        for item in st.session_state.carrito_salida:
+                            idx = df_inventario[df_inventario['id'] == item['id']].index[0]
+                            if item['cantidad'] > df_inventario.at[idx, 'stock_actual']:
+                                excedidos.append(item['producto'])
+                                continue
+                            
+                            # Actualizar stock
+                            df_inventario.at[idx, 'stock_actual'] -= item['cantidad']
+                            
+                            # Registrar movimiento
+                            nuevo_movimiento = {
+                                'id': generar_id(df_movimientos),
+                                'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                'tipo': 'SALIDA',
+                                'producto_id': item['id'],
+                                'producto_nombre': item['producto'],
+                                'cantidad': item['cantidad'],
+                                'motivo': motivo_general_sal if motivo_general_sal else "Sin especificar",
+                                'usuario': "Usuario"
+                            }
+                            df_movimientos = pd.concat([df_movimientos, pd.DataFrame([nuevo_movimiento])], ignore_index=True)
+                        
+                        guardar_inventario(df_inventario)
+                        guardar_movimientos(df_movimientos)
+                        
+                        st.session_state.carrito_salida = []
+                        if excedidos:
+                            st.warning(f"⚠️ No se procesaron salidas por stock insuficiente: {', '.join(excedidos)}")
+                        st.success(f"✅ {total_salidas - len(excedidos)} salidas procesadas exitosamente")
+                        st.rerun()
+            else:
+                st.info("🛒 El carrito está vacío. Agrega productos para procesar salidas en grupo.")
 
 # PÁGINA: COMPRAS Y PAGOS
 elif pagina == "💰 Compras y Pagos":
@@ -533,16 +665,18 @@ elif pagina == "💰 Compras y Pagos":
             # Opción rápida para marcar como pagado
             st.markdown("---")
             st.subheader("⚡ Marcar Producto como Pagado (Con registro automático)")
+            opciones_marcar = opciones_productos(productos_pendientes)
             producto_marcar = st.selectbox("Seleccionar producto para marcar como pagado:", 
-                                         ["Seleccionar..."] + productos_pendientes['nombre'].tolist())
+                                         ["Seleccionar..."] + list(opciones_marcar.keys()))
             
             if producto_marcar != "Seleccionar...":
-                producto_info = productos_pendientes[productos_pendientes['nombre'] == producto_marcar].iloc[0]
+                id_marcar = opciones_marcar[producto_marcar]
+                producto_info = productos_pendientes[productos_pendientes['id'] == id_marcar].iloc[0]
                 monto_automatico = producto_info['precio_compra'] if pd.notna(producto_info['precio_compra']) else 0
                 
                 if st.button(f"✅ Marcar '{producto_marcar}' como Pagado"):
                     # Actualizar estado del producto
-                    idx = df_inventario[df_inventario['nombre'] == producto_marcar].index[0]
+                    idx = df_inventario[df_inventario['id'] == id_marcar].index[0]
                     df_inventario.at[idx, 'estado_pago'] = 'Cancelado'
                     guardar_inventario(df_inventario)
                     
@@ -590,15 +724,17 @@ elif pagina == "💰 Compras y Pagos":
                 st.info("No hay productos con pagos pendientes para registrar.")
                 st.info("💡 Para registrar pagos, primero agrega productos con estado de pago 'Pendiente' o agrega un precio de compra en 'Agregar Producto'")
             else:
-                producto = st.selectbox("Seleccionar producto a pagar:", productos_pendientes['nombre'].tolist())
+                opciones_pago = opciones_productos(productos_pendientes)
+                producto = st.selectbox("Seleccionar producto a pagar:", list(opciones_pago.keys()))
                 
                 if producto:
-                    producto_info = productos_pendientes[productos_pendientes['nombre'] == producto].iloc[0]
+                    id_pago = opciones_pago[producto]
+                    producto_info = productos_pendientes[productos_pendientes['id'] == id_pago].iloc[0]
                     
                     # Mostrar información del producto
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        precio_compra = producto_info['precio_compra'] if pd.notna(producto_info['precio_compra']) else 0
+                        precio_compra = float(producto_info['precio_compra']) if pd.notna(producto_info['precio_compra']) else 0.0
                         st.info(f"💰 Precio compra: ${precio_compra:.2f}")
                     with col2:
                         st.info(f"📄 Guía/Factura: {producto_info['numero_guia_factura']}")
@@ -606,7 +742,7 @@ elif pagina == "💰 Compras y Pagos":
                         st.info(f"📅 Fecha compra: {producto_info['fecha_compra']}")
                     
                     with st.form("form_pago"):
-                        monto_pago = st.number_input("Monto a pagar*", min_value=0.0, value=float(precio_compra), step=0.01)
+                        monto_pago = st.number_input("Monto a pagar*", min_value=0.0, max_value=precio_compra, value=precio_compra, step=0.01)
                         metodo_pago = st.selectbox("Método de pago*", ["Efectivo", "Transferencia", "Tarjeta", "Cheque", "Otro"])
                         referencia = st.text_input("Referencia (número de operación, cheque, etc.)", placeholder="Ej: OP-123456")
                         observaciones = st.text_area("Observaciones", placeholder="Notas adicionales sobre el pago")
@@ -614,9 +750,11 @@ elif pagina == "💰 Compras y Pagos":
                         submitted = st.form_submit_button("Registrar Pago")
                         
                         if submitted:
-                            if monto_pago > 0:
+                            if monto_pago > precio_compra:
+                                st.error(f"❌ El monto (${monto_pago:.2f}) no puede exceder el precio de compra del proveedor (${precio_compra:.2f})")
+                            elif monto_pago > 0:
                                 # Actualizar estado del producto
-                                idx = df_inventario[df_inventario['nombre'] == producto].index[0]
+                                idx = df_inventario[df_inventario['id'] == id_pago].index[0]
                                 df_inventario.at[idx, 'estado_pago'] = 'Cancelado'
                                 guardar_inventario(df_inventario)
                                 
