@@ -91,7 +91,7 @@ with st.sidebar:
     pagina = st.radio(
         "Selecciona una opción:",
         ["📋 Ver Inventario", "➕ Agregar Producto", "📥 Registrar Entrada", 
-         "📤 Registrar Salida", "💰 Compras y Pagos", "📊 Reportes", "⚙️ Configuración"]
+         "📤 Registrar Salida", "🕒 Historial", "💰 Compras y Pagos", "📊 Reportes", "⚙️ Configuración"]
     )
 
 # Cargar datos
@@ -485,6 +485,60 @@ elif pagina == "📤 Registrar Salida":
                         st.rerun()
             else:
                 st.info("🛒 La lista está vacía. Busca un producto y presiona 'Agregar' para registrar salidas.")
+
+# PÁGINA: HISTORIAL DE MOVIMIENTOS
+elif pagina == "🕒 Historial":
+    st.header("🕒 Historial de Entradas y Salidas")
+    
+    if df_movimientos.empty:
+        st.info("No hay movimientos registrados todavía. Las entradas y salidas que registres aparecerán aquí.")
+    else:
+        df_hist = df_movimientos.copy()
+        df_hist['fecha_dt'] = pd.to_datetime(df_hist['fecha'], errors='coerce')
+        
+        # Filtros
+        col1, col2 = st.columns(2)
+        with col1:
+            filtro_tipo = st.selectbox("Tipo de movimiento:", ["Todos", "ENTRADA", "SALIDA"])
+        with col2:
+            busqueda_hist = st.text_input("🔍 Buscar producto:", placeholder="Ej: cierre, elastico")
+        
+        if filtro_tipo != "Todos":
+            df_hist = df_hist[df_hist['tipo'] == filtro_tipo]
+        if busqueda_hist:
+            df_hist = df_hist[df_hist['producto_nombre'].astype(str).str.contains(busqueda_hist.strip(), case=False, na=False)]
+        
+        if df_hist.empty:
+            st.warning("No hay movimientos que coincidan con los filtros.")
+        else:
+            # Más reciente primero
+            df_hist = df_hist.sort_values('fecha_dt', ascending=False)
+            df_mostrar = df_hist[['fecha', 'tipo', 'producto_nombre', 'cantidad', 'motivo']].rename(columns={
+                'fecha': 'Fecha', 'tipo': 'Tipo', 'producto_nombre': 'Producto',
+                'cantidad': 'Cantidad', 'motivo': 'Motivo'
+            })
+            
+            def color_tipo(val):
+                if val == 'ENTRADA':
+                    return 'background-color: #d4edda'
+                return 'background-color: #f8d7da'
+            
+            st.dataframe(
+                df_mostrar.style.map(color_tipo, subset=['Tipo']),
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Resumen
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("📥 Total entradas", int(df_hist[df_hist['tipo'] == 'ENTRADA']['cantidad'].sum()))
+            with col2:
+                st.metric("📤 Total salidas", int(df_hist[df_hist['tipo'] == 'SALIDA']['cantidad'].sum()))
+            
+            if st.button("📥 Exportar historial a CSV"):
+                df_mostrar.to_csv("historial_movimientos.csv", index=False)
+                st.success("✅ Historial exportado como 'historial_movimientos.csv'")
 
 # PÁGINA: COMPRAS Y PAGOS
 elif pagina == "💰 Compras y Pagos":
