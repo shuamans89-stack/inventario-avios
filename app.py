@@ -241,46 +241,73 @@ elif pagina == "📥 Registrar Entrada":
     if df_inventario.empty:
         st.warning("No hay productos en el inventario. Primero agrega productos.")
     else:
-        producto = st.selectbox("Seleccionar producto:", df_inventario['nombre'].tolist())
+        # Filtros para facilitar la búsqueda
+        st.subheader("🔍 Filtros de búsqueda")
+        col1, col2, col3 = st.columns(3)
         
-        if producto:
-            producto_info = df_inventario[df_inventario['nombre'] == producto].iloc[0]
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.info(f"Stock actual: {producto_info['stock_actual']}")
-            with col2:
-                st.info(f"Categoría: {producto_info['categoria']}")
-            with col3:
-                st.info(f"Ubicación: {producto_info['ubicacion']}")
+        with col1:
+            filtro_categoria_ent = st.selectbox("Filtrar por categoría:", ["Todas"] + list(df_inventario['categoria'].unique()))
+        with col2:
+            filtro_color_ent = st.selectbox("Filtrar por color:", ["Todos"] + list(df_inventario['color'].unique()))
+        with col3:
+            filtro_tamaño_ent = st.selectbox("Filtrar por tamaño:", ["Todos"] + list(df_inventario['tamaño'].unique()))
+        
+        # Aplicar filtros
+        df_filtrado_ent = df_inventario.copy()
+        if filtro_categoria_ent != "Todas":
+            df_filtrado_ent = df_filtrado_ent[df_filtrado_ent['categoria'] == filtro_categoria_ent]
+        if filtro_color_ent != "Todos":
+            df_filtrado_ent = df_filtrado_ent[df_filtrado_ent['color'] == filtro_color_ent]
+        if filtro_tamaño_ent != "Todos":
+            df_filtrado_ent = df_filtrado_ent[df_filtrado_ent['tamaño'] == filtro_tamaño_ent]
+        
+        st.markdown("---")
+        
+        if df_filtrado_ent.empty:
+            st.warning("No hay productos que coincidan con los filtros seleccionados.")
+        else:
+            producto = st.selectbox("Seleccionar producto:", df_filtrado_ent['nombre'].tolist())
             
-            with st.form("form_entrada"):
-                cantidad = st.number_input("Cantidad a ingresar*", min_value=1, value=1)
-                motivo = st.text_area("Motivo/Nota", placeholder="Ej: Compra a proveedor, devolución, etc.")
+            if producto:
+                producto_info = df_filtrado_ent[df_filtrado_ent['nombre'] == producto].iloc[0]
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.info(f"Stock actual: {producto_info['stock_actual']}")
+                with col2:
+                    st.info(f"Categoría: {producto_info['categoria']}")
+                with col3:
+                    st.info(f"Color: {producto_info['color']}")
+                with col4:
+                    st.info(f"Tamaño: {producto_info['tamaño']}")
                 
-                submitted = st.form_submit_button("Registrar Entrada")
-                
-                if submitted:
-                    # Actualizar stock
-                    idx = df_inventario[df_inventario['nombre'] == producto].index[0]
-                    df_inventario.at[idx, 'stock_actual'] += cantidad
-                    guardar_inventario(df_inventario)
+                with st.form("form_entrada"):
+                    cantidad = st.number_input("Cantidad a ingresar*", min_value=1, value=1)
+                    motivo = st.text_area("Motivo/Nota", placeholder="Ej: Compra a proveedor, devolución, etc.")
                     
-                    # Registrar movimiento
-                    nuevo_movimiento = {
-                        'id': generar_id(df_movimientos),
-                        'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'tipo': 'ENTRADA',
-                        'producto_id': producto_info['id'],
-                        'producto_nombre': producto,
-                        'cantidad': cantidad,
-                        'motivo': motivo if motivo else "Sin especificar",
-                        'usuario': "Usuario"
-                    }
-                    df_movimientos = pd.concat([df_movimientos, pd.DataFrame([nuevo_movimiento])], ignore_index=True)
-                    guardar_movimientos(df_movimientos)
+                    submitted = st.form_submit_button("Registrar Entrada")
                     
-                    st.success(f"✅ Entrada registrada: +{cantidad} unidades de '{producto}'")
-                    st.rerun()
+                    if submitted:
+                        # Actualizar stock
+                        idx = df_inventario[df_inventario['nombre'] == producto].index[0]
+                        df_inventario.at[idx, 'stock_actual'] += cantidad
+                        guardar_inventario(df_inventario)
+                        
+                        # Registrar movimiento
+                        nuevo_movimiento = {
+                            'id': generar_id(df_movimientos),
+                            'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'tipo': 'ENTRADA',
+                            'producto_id': producto_info['id'],
+                            'producto_nombre': producto,
+                            'cantidad': cantidad,
+                            'motivo': motivo if motivo else "Sin especificar",
+                            'usuario': "Usuario"
+                        }
+                        df_movimientos = pd.concat([df_movimientos, pd.DataFrame([nuevo_movimiento])], ignore_index=True)
+                        guardar_movimientos(df_movimientos)
+                        
+                        st.success(f"✅ Entrada registrada: +{cantidad} unidades de '{producto}'")
+                        st.rerun()
 
 # PÁGINA: REGISTRAR SALIDA
 elif pagina == "📤 Registrar Salida":
@@ -289,47 +316,74 @@ elif pagina == "📤 Registrar Salida":
     if df_inventario.empty:
         st.warning("No hay productos en el inventario. Primero agrega productos.")
     else:
-        producto = st.selectbox("Seleccionar producto:", df_inventario['nombre'].tolist())
+        # Filtros para facilitar la búsqueda
+        st.subheader("🔍 Filtros de búsqueda")
+        col1, col2, col3 = st.columns(3)
         
-        if producto:
-            producto_info = df_inventario[df_inventario['nombre'] == producto].iloc[0]
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.info(f"Stock actual: {producto_info['stock_actual']}")
-            with col2:
-                st.info(f"Stock mínimo: {producto_info['stock_minimo']}")
-            with col3:
-                stock_color = "🔴" if producto_info['stock_actual'] < producto_info['stock_minimo'] else "🟢"
-                st.info(f"Estado: {stock_color}")
+        with col1:
+            filtro_categoria_sal = st.selectbox("Filtrar por categoría:", ["Todas"] + list(df_inventario['categoria'].unique()))
+        with col2:
+            filtro_color_sal = st.selectbox("Filtrar por color:", ["Todos"] + list(df_inventario['color'].unique()))
+        with col3:
+            filtro_tamaño_sal = st.selectbox("Filtrar por tamaño:", ["Todos"] + list(df_inventario['tamaño'].unique()))
+        
+        # Aplicar filtros
+        df_filtrado_sal = df_inventario.copy()
+        if filtro_categoria_sal != "Todas":
+            df_filtrado_sal = df_filtrado_sal[df_filtrado_sal['categoria'] == filtro_categoria_sal]
+        if filtro_color_sal != "Todos":
+            df_filtrado_sal = df_filtrado_sal[df_filtrado_sal['color'] == filtro_color_sal]
+        if filtro_tamaño_sal != "Todos":
+            df_filtrado_sal = df_filtrado_sal[df_filtrado_sal['tamaño'] == filtro_tamaño_sal]
+        
+        st.markdown("---")
+        
+        if df_filtrado_sal.empty:
+            st.warning("No hay productos que coincidan con los filtros seleccionados.")
+        else:
+            producto = st.selectbox("Seleccionar producto:", df_filtrado_sal['nombre'].tolist())
             
-            with st.form("form_salida"):
-                cantidad = st.number_input("Cantidad a retirar*", min_value=1, max_value=producto_info['stock_actual'], value=1)
-                motivo = st.text_area("Motivo/Nota", placeholder="Ej: Venta, uso en producción, pérdida, etc.")
+            if producto:
+                producto_info = df_filtrado_sal[df_filtrado_sal['nombre'] == producto].iloc[0]
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.info(f"Stock actual: {producto_info['stock_actual']}")
+                with col2:
+                    st.info(f"Stock mínimo: {producto_info['stock_minimo']}")
+                with col3:
+                    st.info(f"Color: {producto_info['color']}")
+                with col4:
+                    stock_color = "🔴" if producto_info['stock_actual'] < producto_info['stock_minimo'] else "🟢"
+                    st.info(f"Estado: {stock_color}")
                 
-                submitted = st.form_submit_button("Registrar Salida")
-                
-                if submitted:
-                    # Actualizar stock
-                    idx = df_inventario[df_inventario['nombre'] == producto].index[0]
-                    df_inventario.at[idx, 'stock_actual'] -= cantidad
-                    guardar_inventario(df_inventario)
+                with st.form("form_salida"):
+                    cantidad = st.number_input("Cantidad a retirar*", min_value=1, max_value=producto_info['stock_actual'], value=1)
+                    motivo = st.text_area("Motivo/Nota", placeholder="Ej: Venta, uso en producción, pérdida, etc.")
                     
-                    # Registrar movimiento
-                    nuevo_movimiento = {
-                        'id': generar_id(df_movimientos),
-                        'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'tipo': 'SALIDA',
-                        'producto_id': producto_info['id'],
-                        'producto_nombre': producto,
-                        'cantidad': cantidad,
-                        'motivo': motivo if motivo else "Sin especificar",
-                        'usuario': "Usuario"
-                    }
-                    df_movimientos = pd.concat([df_movimientos, pd.DataFrame([nuevo_movimiento])], ignore_index=True)
-                    guardar_movimientos(df_movimientos)
+                    submitted = st.form_submit_button("Registrar Salida")
                     
-                    st.success(f"✅ Salida registrada: -{cantidad} unidades de '{producto}'")
-                    st.rerun()
+                    if submitted:
+                        # Actualizar stock
+                        idx = df_inventario[df_inventario['nombre'] == producto].index[0]
+                        df_inventario.at[idx, 'stock_actual'] -= cantidad
+                        guardar_inventario(df_inventario)
+                        
+                        # Registrar movimiento
+                        nuevo_movimiento = {
+                            'id': generar_id(df_movimientos),
+                            'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'tipo': 'SALIDA',
+                            'producto_id': producto_info['id'],
+                            'producto_nombre': producto,
+                            'cantidad': cantidad,
+                            'motivo': motivo if motivo else "Sin especificar",
+                            'usuario': "Usuario"
+                        }
+                        df_movimientos = pd.concat([df_movimientos, pd.DataFrame([nuevo_movimiento])], ignore_index=True)
+                        guardar_movimientos(df_movimientos)
+                        
+                        st.success(f"✅ Salida registrada: -{cantidad} unidades de '{producto}'")
+                        st.rerun()
 
 # PÁGINA: COMPRAS Y PAGOS
 elif pagina == "💰 Compras y Pagos":
