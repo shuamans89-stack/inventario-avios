@@ -198,10 +198,46 @@ def opciones_productos(df):
 
 # Interfaz principal
 st.title("🧵 Sistema de Control de Inventario - Avíos Textil")
+
+
+def _password_app():
+    try:
+        return st.secrets["APP_PASSWORD"]
+    except Exception:
+        return None
+
+
+APP_PASSWORD = _password_app()
+
+if APP_PASSWORD:
+    if 'autenticado' not in st.session_state:
+        st.session_state.autenticado = False
+
+    if not st.session_state.autenticado:
+        st.markdown("### 🔐 Acceso Restringido")
+        st.info("Este sistema es de uso privado. Ingresa la contraseña para continuar.")
+        with st.form("form_login"):
+            password = st.text_input("Contraseña:", type="password")
+            enviar = st.form_submit_button("Ingresar")
+
+            if enviar:
+                if password == APP_PASSWORD:
+                    st.session_state.autenticado = True
+                    st.success("✅ Acceso correcto")
+                    st.rerun()
+                else:
+                    st.error("❌ Contraseña incorrecta")
+
+        st.stop()
+
 st.markdown("---")
 
 # Sidebar para navegación
 with st.sidebar:
+    if APP_PASSWORD:
+        if st.button("🔒 Cerrar sesión"):
+            st.session_state.autenticado = False
+            st.rerun()
     st.header("Navegación")
     pagina = st.radio(
         "Selecciona una opción:",
