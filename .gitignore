@@ -1,0 +1,6 @@
+.streamlit/secrets.toml
+__pycache__/
+historial_movimientos.csv
+historial_pagos.csv
+alertas_stock_bajo.csv
+*_export.csv

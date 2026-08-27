@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import os
+import threading
 from datetime import datetime
 
 # Configuración de la página
@@ -10,63 +12,173 @@ st.set_page_config(
     layout="wide"
 )
 
-# Archivo de datos
+# Archivo de datos (respaldo local cuando no hay base de datos en la nube)
 DATA_FILE = "inventario.csv"
 MOVIMIENTOS_FILE = "movimientos.csv"
 PAGOS_FILE = "pagos.csv"
 
+COLUMNAS_INVENTARIO = ['id', 'nombre', 'categoria', 'color', 'tamaño', 'stock_actual',
+                       'stock_minimo', 'precio_unitario', 'precio_compra', 'estado_pago',
+                       'fecha_compra', 'numero_guia_factura', 'proveedor', 'ubicacion', 'fecha_registro']
+COLUMNAS_MOVIMIENTOS = ['id', 'fecha', 'tipo', 'producto_id', 'producto_nombre',
+                        'cantidad', 'motivo', 'usuario']
+COLUMNAS_PAGOS = ['id', 'fecha_pago', 'producto_id', 'producto_nombre',
+                  'monto', 'metodo_pago', 'referencia', 'observaciones']
+
+# Base de datos en la nube (Turso). Se activa al configurar los secretos
+# TURSO_DATABASE_URL y TURSO_AUTH_TOKEN. Sin ellos se usan los CSV locales.
+def _db_config():
+    try:
+        url = st.secrets["TURSO_DATABASE_URL"]
+        token = st.secrets["TURSO_AUTH_TOKEN"]
+        if url and token:
+            return url, token
+    except Exception:
+        pass
+    return None, None
+
+DB_URL, DB_TOKEN = _db_config()
+USE_DB = bool(DB_URL and DB_TOKEN)
+
+_db_lock = threading.RLock()
+
+
+@st.cache_resource
+def _db_client():
+    import libsql_client
+    return libsql_client.create_client_sync(DB_URL, auth_token=DB_TOKEN)
+
+
+@st.cache_resource
+def _db_inicializar():
+    """Crea las tablas si no existen y migra los CSV la primera vez."""
+    client = _db_client()
+    with _db_lock:
+        client.batch([
+            """CREATE TABLE IF NOT EXISTS inventario (
+                id INTEGER PRIMARY KEY, nombre TEXT, categoria TEXT, color TEXT,
+                tamaño TEXT, stock_actual INTEGER, stock_minimo INTEGER,
+                precio_unitario REAL, precio_compra REAL, estado_pago TEXT,
+                fecha_compra TEXT, numero_guia_factura TEXT, proveedor TEXT,
+                ubicacion TEXT, fecha_registro TEXT)""",
+            """CREATE TABLE IF NOT EXISTS movimientos (
+                id INTEGER PRIMARY KEY, fecha TEXT, tipo TEXT, producto_id INTEGER,
+                producto_nombre TEXT, cantidad INTEGER, motivo TEXT, usuario TEXT)""",
+            """CREATE TABLE IF NOT EXISTS pagos (
+                id INTEGER PRIMARY KEY, fecha_pago TEXT, producto_id INTEGER,
+                producto_nombre TEXT, monto REAL, metodo_pago TEXT,
+                referencia TEXT, observaciones TEXT)""",
+            "CREATE TABLE IF NOT EXISTS meta (clave TEXT PRIMARY KEY, valor TEXT)",
+        ])
+        # Migración única: si nunca se migró, importar los CSV existentes
+        rs = client.execute("SELECT valor FROM meta WHERE clave = 'migrado'")
+        if not rs.rows:
+            for tabla, archivo, columnas in [
+                ("inventario", DATA_FILE, COLUMNAS_INVENTARIO),
+                ("movimientos", MOVIMIENTOS_FILE, COLUMNAS_MOVIMIENTOS),
+                ("pagos", PAGOS_FILE, COLUMNAS_PAGOS),
+            ]:
+                if os.path.exists(archivo):
+                    df = pd.read_csv(archivo)
+                    for c in columnas:
+                        if c not in df.columns:
+                            df[c] = None
+                    if not df.empty:
+                        _db_guardar_tabla(tabla, df, columnas)
+            client.execute("INSERT OR REPLACE INTO meta (clave, valor) VALUES ('migrado', '1')")
+    return True
+
+
+def _db_leer_tabla(tabla, columnas):
+    client = _db_client()
+    with _db_lock:
+        rs = client.execute(f"SELECT {','.join(columnas)} FROM {tabla}")
+        return pd.DataFrame(list(rs.rows), columns=list(rs.columns))
+
+
+def _db_guardar_tabla(tabla, df, columnas):
+    client = _db_client()
+    stmts = [f"DELETE FROM {tabla}"]
+    for _, fila in df.iterrows():
+        valores = []
+        for c in columnas:
+            v = fila[c]
+            if pd.isna(v):
+                valores.append(None)
+            elif isinstance(v, (int, np.integer)):
+                valores.append(int(v))
+            elif isinstance(v, (float, np.floating)):
+                valores.append(float(v))
+            else:
+                valores.append(str(v))
+        placeholders = ",".join(["?"] * len(columnas))
+        stmts.append((f"INSERT INTO {tabla} ({','.join(columnas)}) VALUES ({placeholders})", valores))
+    with _db_lock:
+        client.batch(stmts)
+
+
+if USE_DB:
+    _db_inicializar()
+
+
+def _normalizar_inventario(df):
+    # Asegurar columnas nuevas (compatibilidad con datos antiguos)
+    for campo in ['precio_compra', 'estado_pago', 'fecha_compra', 'numero_guia_factura']:
+        if campo not in df.columns:
+            df[campo] = None
+    # Forzar tipos numéricos para evitar errores al comparar o estilizar
+    for campo in ['stock_actual', 'stock_minimo']:
+        df[campo] = pd.to_numeric(df[campo], errors='coerce').fillna(0).astype(int)
+    return df
+
+
 # Funciones de gestión de datos
 def cargar_inventario():
+    if USE_DB:
+        return _normalizar_inventario(_db_leer_tabla("inventario", COLUMNAS_INVENTARIO))
     if os.path.exists(DATA_FILE):
-        df = pd.read_csv(DATA_FILE)
-        # Asegurar que los nuevos campos existan (para compatibilidad con datos antiguos)
-        campos_nuevos = ['precio_compra', 'estado_pago', 'fecha_compra', 'numero_guia_factura']
-        for campo in campos_nuevos:
-            if campo not in df.columns:
-                df[campo] = None
-        # Forzar tipos numéricos enteros para evitar errores al comparar o estilizar
-        for campo in ['stock_actual', 'stock_minimo']:
-            df[campo] = pd.to_numeric(df[campo], errors='coerce').fillna(0).astype(int)
-        return df
-    else:
-        # Crear DataFrame inicial con columnas
-        columnas = ['id', 'nombre', 'categoria', 'color', 'tamaño', 'stock_actual', 
-                   'stock_minimo', 'precio_unitario', 'precio_compra', 'estado_pago', 
-                   'fecha_compra', 'numero_guia_factura', 'proveedor', 'ubicacion', 'fecha_registro']
-        df = pd.DataFrame(columns=columnas)
-        df.to_csv(DATA_FILE, index=False)
-        return df
+        return _normalizar_inventario(pd.read_csv(DATA_FILE))
+    df = pd.DataFrame(columns=COLUMNAS_INVENTARIO)
+    df.to_csv(DATA_FILE, index=False)
+    return df
 
 def guardar_inventario(df):
     for campo in ['stock_actual', 'stock_minimo']:
         df[campo] = pd.to_numeric(df[campo], errors='coerce').fillna(0).astype(int)
-    df.to_csv(DATA_FILE, index=False)
+    if USE_DB:
+        _db_guardar_tabla("inventario", df, COLUMNAS_INVENTARIO)
+    else:
+        df.to_csv(DATA_FILE, index=False)
 
 def cargar_movimientos():
+    if USE_DB:
+        return _db_leer_tabla("movimientos", COLUMNAS_MOVIMIENTOS)
     if os.path.exists(MOVIMIENTOS_FILE):
         return pd.read_csv(MOVIMIENTOS_FILE)
-    else:
-        columnas = ['id', 'fecha', 'tipo', 'producto_id', 'producto_nombre', 
-                   'cantidad', 'motivo', 'usuario']
-        df = pd.DataFrame(columns=columnas)
-        df.to_csv(MOVIMIENTOS_FILE, index=False)
-        return df
+    df = pd.DataFrame(columns=COLUMNAS_MOVIMIENTOS)
+    df.to_csv(MOVIMIENTOS_FILE, index=False)
+    return df
 
 def guardar_movimientos(df):
-    df.to_csv(MOVIMIENTOS_FILE, index=False)
+    if USE_DB:
+        _db_guardar_tabla("movimientos", df, COLUMNAS_MOVIMIENTOS)
+    else:
+        df.to_csv(MOVIMIENTOS_FILE, index=False)
 
 def cargar_pagos():
+    if USE_DB:
+        return _db_leer_tabla("pagos", COLUMNAS_PAGOS)
     if os.path.exists(PAGOS_FILE):
         return pd.read_csv(PAGOS_FILE)
-    else:
-        columnas = ['id', 'fecha_pago', 'producto_id', 'producto_nombre', 
-                   'monto', 'metodo_pago', 'referencia', 'observaciones']
-        df = pd.DataFrame(columns=columnas)
-        df.to_csv(PAGOS_FILE, index=False)
-        return df
+    df = pd.DataFrame(columns=COLUMNAS_PAGOS)
+    df.to_csv(PAGOS_FILE, index=False)
+    return df
 
 def guardar_pagos(df):
-    df.to_csv(PAGOS_FILE, index=False)
+    if USE_DB:
+        _db_guardar_tabla("pagos", df, COLUMNAS_PAGOS)
+    else:
+        df.to_csv(PAGOS_FILE, index=False)
 
 def generar_id(df):
     if df.empty:
