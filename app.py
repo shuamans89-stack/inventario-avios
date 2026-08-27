@@ -196,6 +196,17 @@ def etiqueta_producto(fila):
 def opciones_productos(df):
     return {etiqueta_producto(fila): int(fila['id']) for _, fila in df.iterrows()}
 
+
+def balance_pagos(df_pagos, id_producto, precio_total):
+    """Calcula cuánto lleva pagado y pendiente un producto sumando su historial."""
+    if precio_total <= 0:
+        return 0.0, 0.0
+    m = df_pagos[df_pagos['producto_id'] == id_producto]['monto'] if not df_pagos.empty else pd.Series(dtype=float)
+    pagos_validos = m if pd.api.types.is_numeric_dtype(m) else pd.to_numeric(m, errors='coerce').fillna(0)
+    total_pagado = float(pagos_validos.sum())
+    pendiente = max(0.0, float(precio_total) - total_pagado)
+    return total_pagado, pendiente
+
 # Interfaz principal
 st.title("🧵 Sistema de Control de Inventario - Avíos Textil")
 
@@ -700,85 +711,73 @@ elif pagina == "💰 Compras y Pagos":
     
     with tab1:
         st.subheader("📋 Productos con Pagos Pendientes")
+
+        # Calcular balance real (lo que falta pagar) en base al historial de pagos
+        with_precio = df_inventario[(df_inventario['precio_compra'].notna()) & 
+                                    (df_inventario['precio_compra'] > 0)]
         
-        # Filtrar productos pendientes de pago (lógica simplificada)
-        mask_pendiente = (df_inventario['estado_pago'].fillna('') == 'Pendiente')
-        mask_precio_sin_estado = ((df_inventario['estado_pago'].fillna('') == '') & 
-                                 (df_inventario['precio_compra'].notna()) & 
-                                 (df_inventario['precio_compra'] > 0))
-        
-        productos_pendientes = df_inventario[mask_pendiente | mask_precio_sin_estado]
-        
-        st.write(f"Productos encontrados como pendientes: {len(productos_pendientes)}")
-        
-        if not productos_pendientes.empty:
-            st.info(f"Se encontraron {len(productos_pendientes)} productos con pagos pendientes")
-            
-            # Mostrar tabla con información de pagos
-            def highlight_pending(val):
-                if val == 'Pendiente' or val == '':
-                    return 'background-color: #fff3cd'
-                return ''
-            
-            df_display = productos_pendientes[['nombre', 'categoria', 'precio_compra', 'estado_pago', 
-                                               'fecha_compra', 'numero_guia_factura', 'proveedor']].copy()
-            df_display['precio_compra'] = df_display['precio_compra'].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-            df_display['estado_pago'] = df_display['estado_pago'].fillna('Pendiente')
-            
-            st.dataframe(
-                df_display.style.map(highlight_pending, subset=['estado_pago']),
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # Total pendiente
-            total_pendiente = productos_pendientes['precio_compra'].sum()
-            st.metric("💰 Total Pendiente de Pago", f"${total_pendiente:.2f}")
-            
-            # Opción rápida para marcar como pagado
-            st.markdown("---")
-            st.subheader("⚡ Marcar Producto como Pagado (Con registro automático)")
-            opciones_marcar = opciones_productos(productos_pendientes)
-            producto_marcar = st.selectbox("Seleccionar producto para marcar como pagado:", 
-                                         ["Seleccionar..."] + list(opciones_marcar.keys()))
-            
-            if producto_marcar != "Seleccionar...":
-                id_marcar = opciones_marcar[producto_marcar]
-                producto_info = productos_pendientes[productos_pendientes['id'] == id_marcar].iloc[0]
-                monto_automatico = producto_info['precio_compra'] if pd.notna(producto_info['precio_compra']) else 0
-                
-                if st.button(f"✅ Marcar '{producto_marcar}' como Pagado"):
-                    # Actualizar estado del producto
-                    idx = df_inventario[df_inventario['id'] == id_marcar].index[0]
-                    df_inventario.at[idx, 'estado_pago'] = 'Cancelado'
-                    guardar_inventario(df_inventario)
-                    
-                    # Registrar pago automáticamente en historial
-                    nuevo_pago = {
-                        'id': generar_id(df_pagos),
-                        'fecha_pago': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'producto_id': producto_info['id'],
-                        'producto_nombre': producto_marcar,
-                        'monto': monto_automatico,
-                        'metodo_pago': 'No especificado',
-                        'referencia': 'Cancelación automática',
-                        'observaciones': 'Marcado como pagado mediante opción rápida'
-                    }
-                    df_pagos = pd.concat([df_pagos, pd.DataFrame([nuevo_pago])], ignore_index=True)
-                    guardar_pagos(df_pagos)
-                    
-                    st.success(f"✅ '{producto_marcar}' marcado como pagado")
-                    st.info(f"📝 Registro automático creado en historial con fecha: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                    st.rerun()
+        if with_precio.empty:
+            st.success("✅ No hay productos con precio de compra. Todo al día.")
         else:
-            st.success("✅ No hay productos con pagos pendientes")
-            st.info("💡 Para agregar productos con pagos pendientes, ve a 'Agregar Producto' y establece el estado de pago como 'Pendiente' o agrega un precio de compra")
+            rows = []
+            for idx, producto in with_precio.iterrows():
+                precio = float(producto['precio_compra'])
+                pagado, pendiente = balance_pagos(df_pagos, producto['id'], precio)
+                
+                if pendiente > 0:
+                    rows.append({
+                        'nombre': producto['nombre'],
+                        'categoria': producto['categoria'],
+                        'precio_compra': f"${precio:.2f}",
+                        'total_pagado': f"${pagado:.2f}",
+                        'monto_pendiente': pendiente,
+                    })
             
-            # Mostrar todos los productos para diagnóstico
-            if not df_inventario.empty:
+            if rows:
+                st.info(f"Se encontraron {len(rows)} productos con saldo pendiente")
+                
+                df_display = pd.DataFrame(rows)
+                
+                def highlight_deuda(val):
+                    return 'background-color: #fff3cd'
+                
+                st.dataframe(
+                    df_display.style.map(highlight_deuda, subset=['monto_pendiente']),
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                total_pendiente = sum(r['monto_pendiente'] for r in rows)
+                st.metric("💰 Total Pendiente de Pago", f"${total_pendiente:.2f}")
+                
                 st.markdown("---")
-                st.subheader("🔍 Todos los productos (para diagnóstico)")
-                st.dataframe(df_inventario[['nombre', 'precio_compra', 'estado_pago']], use_container_width=True, hide_index=True)
+                st.subheader("⚡ Pagar Deuda Completa")
+                labels = {f"{r['nombre']} - debe ${r['monto_pendiente']:.2f}": r['nombre'] for r in rows}
+                seleccion = st.selectbox("Producto para saldar deuda:", ["Seleccionar..."] + list(labels.keys()))
+                
+                if seleccion != "Seleccionar...":
+                    if st.button(f"✅ Saldar deuda de {labels[seleccion]}",
+                                key="btn_saldar"):
+                        nombre = labels[seleccion]
+                        idx = df_inventario[df_inventario['nombre'] == nombre].index[0]
+                        pendiente = df_display[df_display['nombre'] == nombre]['monto_pendiente'].iloc[0]
+                        
+                        nuevo_pago = {
+                            'id': generar_id(df_pagos),
+                            'fecha_pago': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'producto_id': int(df_inventario.at[idx, 'id']),
+                            'producto_nombre': nombre,
+                            'monto': float(pendiente),
+                            'metodo_pago': 'No especificado',
+                            'referencia': 'Saldar deuda',
+                            'observaciones': 'Saldado mediante opción rápida'
+                        }
+                        df_pagos = pd.concat([df_pagos, pd.DataFrame([nuevo_pago])], ignore_index=True)
+                        guardar_pagos(df_pagos)
+                        st.success(f"✅ Deuda saldada por ${pendiente:.2f}")
+                        st.rerun()
+            else:
+                st.success("✅ No hay productos pendientes de pagar")
     
     with tab2:
         st.subheader("💵 Registrar Pago")
@@ -787,15 +786,22 @@ elif pagina == "💰 Compras y Pagos":
             st.warning("No hay productos en el inventario.")
             st.info("💡 Primero agrega productos en la sección 'Agregar Producto'")
         else:
-            # Filtrar solo productos pendientes (manejar None y productos con precio_compra sin estado)
-            productos_pendientes = df_inventario[
-                (df_inventario['estado_pago'].fillna('') == 'Pendiente') |
-                ((df_inventario['estado_pago'].fillna('') == '') & (df_inventario['precio_compra'].notna()) & (df_inventario['precio_compra'] > 0))
-            ]
+            with_precio = df_inventario[(df_inventario['precio_compra'].notna()) & 
+                                        (df_inventario['precio_compra'] > 0)]
+            
+            # Solo listar productos con deuda real (balance > 0)
+            productos_pendientes_id = []
+            for _, producto in with_precio.iterrows():
+                precio = float(producto['precio_compra'])
+                _, pendiente = balance_pagos(df_pagos, producto['id'], precio)
+                if pendiente > 0:
+                    productos_pendientes_id.append(producto['id'])
+            
+            productos_pendientes = df_inventario[df_inventario['id'].isin(productos_pendientes_id)]
             
             if productos_pendientes.empty:
-                st.info("No hay productos con pagos pendientes para registrar.")
-                st.info("💡 Para registrar pagos, primero agrega productos con estado de pago 'Pendiente' o agrega un precio de compra en 'Agregar Producto'")
+                st.success("✅ No hay productos con pagos pendientes para registrar.")
+                st.info("💡 Para que aparezcan aquí, agrega un precio de compra al producto en 'Agregar Producto'")
             else:
                 opciones_pago = opciones_productos(productos_pendientes)
                 producto = st.selectbox("Seleccionar producto a pagar:", list(opciones_pago.keys()))
@@ -804,18 +810,28 @@ elif pagina == "💰 Compras y Pagos":
                     id_pago = opciones_pago[producto]
                     producto_info = productos_pendientes[productos_pendientes['id'] == id_pago].iloc[0]
                     
-                    # Mostrar información del producto
-                    col1, col2, col3 = st.columns(3)
+                    # Calcular balance (parcial)
+                    precio_compra = float(producto_info['precio_compra'])
+                    total_pagado, pendiente = balance_pagos(df_pagos, id_pago, precio_compra)
+                    
+                    # Mostrar información del producto + balance
+                    col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        precio_compra = float(producto_info['precio_compra']) if pd.notna(producto_info['precio_compra']) else 0.0
-                        st.info(f"💰 Precio compra: ${precio_compra:.2f}")
+                        st.info(f"💰 Precio total: ${precio_compra:.2f}")
                     with col2:
-                        st.info(f"📄 Guía/Factura: {producto_info['numero_guia_factura']}")
+                        st.info(f"💵 Pagado: ${total_pagado:.2f}")
                     with col3:
-                        st.info(f"📅 Fecha compra: {producto_info['fecha_compra']}")
+                        color = "🟡" if pendiente < precio_compra else "🔴"
+                        st.info(f"{color} Pendiente: ${pendiente:.2f}")
+                    with col4:
+                        st.info(f"📄 Guía/Factura: {producto_info['numero_guia_factura']}")
                     
                     with st.form("form_pago"):
-                        monto_pago = st.number_input("Monto a pagar*", min_value=0.0, max_value=precio_compra, value=precio_compra, step=0.01)
+                        monto_pago = st.number_input("Monto a pagar/adenda*", 
+                                                    min_value=0.0, 
+                                                    max_value=pendiente, 
+                                                    value=float(pendiente), 
+                                                    step=0.01)
                         metodo_pago = st.selectbox("Método de pago*", ["Efectivo", "Transferencia", "Tarjeta", "Cheque", "Otro"])
                         referencia = st.text_input("Referencia (número de operación, cheque, etc.)", placeholder="Ej: OP-123456")
                         observaciones = st.text_area("Observaciones", placeholder="Notas adicionales sobre el pago")
@@ -823,21 +839,16 @@ elif pagina == "💰 Compras y Pagos":
                         submitted = st.form_submit_button("Registrar Pago")
                         
                         if submitted:
-                            if monto_pago > precio_compra:
-                                st.error(f"❌ El monto (${monto_pago:.2f}) no puede exceder el precio de compra del proveedor (${precio_compra:.2f})")
+                            if monto_pago > pendiente:
+                                st.error(f"❌ El monto (${monto_pago:.2f}) excede el saldo pendiente (${pendiente:.2f})")
                             elif monto_pago > 0:
-                                # Actualizar estado del producto
-                                idx = df_inventario[df_inventario['id'] == id_pago].index[0]
-                                df_inventario.at[idx, 'estado_pago'] = 'Cancelado'
-                                guardar_inventario(df_inventario)
-                                
-                                # Registrar pago en historial
+                                # Registrar pago en historial (nunca eliminar producto como recibido)
                                 nuevo_pago = {
                                     'id': generar_id(df_pagos),
                                     'fecha_pago': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    'producto_id': producto_info['id'],
+                                    'producto_id': int(producto_info['id']),
                                     'producto_nombre': producto,
-                                    'monto': monto_pago,
+                                    'monto': float(monto_pago),
                                     'metodo_pago': metodo_pago,
                                     'referencia': referencia if referencia else "Sin especificar",
                                     'observaciones': observaciones if observaciones else "Sin especificar"
@@ -845,8 +856,14 @@ elif pagina == "💰 Compras y Pagos":
                                 df_pagos = pd.concat([df_pagos, pd.DataFrame([nuevo_pago])], ignore_index=True)
                                 guardar_pagos(df_pagos)
                                 
-                                st.success(f"✅ Pago de ${monto_pago:.2f} registrado para '{producto}'")
-                                st.info(f"Estado actualizado a: Cancelado")
+                                resto = pendiente - float(monto_pago)
+                                
+                                if resto <= 0:
+                                    st.success(f"✅ Pago completo registrado. Saldo saldado.")
+                                else:
+                                    st.success(f"✅ Adelanto de ${monto_pago:.2f} registrado.")
+                                    st.warning(f"🔶 Saldo pendiente: ${resto:.2f}")
+                                
                                 st.rerun()
                             else:
                                 st.error("❌ El monto debe ser mayor a 0")
