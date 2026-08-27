@@ -32,6 +32,9 @@ def _db_config():
         url = st.secrets["TURSO_DATABASE_URL"]
         token = st.secrets["TURSO_AUTH_TOKEN"]
         if url and token:
+            # HTTPS es más confiable que websocket (wss) para libsql-client
+            if url.startswith("libsql://"):
+                url = "https://" + url[len("libsql://"):]
             return url, token
     except Exception:
         pass
