@@ -1027,32 +1027,49 @@ elif pagina == "⚙️ Configuración":
     st.markdown("---")
     
     st.subheader("⚠️ Zona de Peligro")
-    st.warning("Estas acciones son irreversibles")
-    
+    st.warning("Estas acciones son irreversibles y borran los datos de la base de datos en la nube")
+
     with st.expander("🗑️ Limpiar Todo el Inventario"):
-        st.error("❌ Esta acción eliminará todos los datos permanentemente")
+        st.error("❌ Esta acción eliminará TODOS los datos (nube y locales) permanentemente")
+
+        try:
+            clave_configurada = st.secrets["ADMIN_PASSWORD"]
+        except Exception:
+            clave_configurada = None
+
+        if not clave_configurada:
+            st.info("ℹ️ La limpieza total está deshabilitada hasta que configures la contraseña "
+                    "'ADMIN_PASSWORD' en los Secrets de Streamlit Cloud.")
+
+        clave = st.text_input("Contraseña de administrador", type="password", key="clave_eliminar")
         confirmacion = st.text_input("Escribe 'ELIMINAR' para confirmar", key="confirmacion_eliminar")
-        
-        if st.button("Confirmar Eliminación", key="btn_eliminar"):
-            if confirmacion == "ELIMINAR":
-                archivos_eliminados = []
-                if os.path.exists(DATA_FILE):
-                    os.remove(DATA_FILE)
-                    archivos_eliminados.append(DATA_FILE)
-                if os.path.exists(MOVIMIENTOS_FILE):
-                    os.remove(MOVIMIENTOS_FILE)
-                    archivos_eliminados.append(MOVIMIENTOS_FILE)
-                if os.path.exists(PAGOS_FILE):
-                    os.remove(PAGOS_FILE)
-                    archivos_eliminados.append(PAGOS_FILE)
-                
-                if archivos_eliminados:
-                    st.success(f"✅ Todos los datos han sido eliminados: {', '.join(archivos_eliminados)}")
-                    st.rerun()
-                else:
-                    st.warning("⚠️ No se encontraron archivos para eliminar")
+
+        if st.button("Confirmar Eliminación Total", key="btn_eliminar"):
+            if not clave_configurada:
+                st.error("❌ Falta configurar la contraseña de administrador en los Secrets")
+            elif clave != clave_configurada:
+                st.error("❌ Contraseña incorrecta")
+            elif confirmacion != "ELIMINAR":
+                st.error("❌ Debes escribir exactamente 'ELIMINAR'")
             else:
-                st.error("❌ Confirmación incorrecta. Debes escribir exactamente 'ELIMINAR'")
+                if USE_DB:
+                    client = _db_client()
+                    with _db_lock:
+                        client.batch([
+                            "DELETE FROM inventario",
+                            "DELETE FROM movimientos",
+                            "DELETE FROM pagos",
+                        ])
+                    st.success("✅ Base de datos de la nube vaciada")
+                else:
+                    st.warning("⚠️ Sin base de datos configurada, solo se borran archivos locales")
+
+                for archivo in (DATA_FILE, MOVIMIENTOS_FILE, PAGOS_FILE):
+                    if os.path.exists(archivo):
+                        os.remove(archivo)
+
+                st.success("✅ Todos los datos fueron eliminados (nube y locales)")
+                st.rerun()
 
 # Footer
 st.markdown("---")
